@@ -108,7 +108,7 @@ class API:
                         event["type"] = EventType.EXAM
                         event["location"] = data.get("phong", {}).get("ma", "")
                     case EventSource.SLINK_SU_KIEN:
-                        event["title"] = data.get("tenDiaDiem", "")
+                        event["title"] = data.get("tenSuKien", "")
                         event["type"] = EventType(data.get("loaiSuKien"))
                         event["location"] = data.get("diaDiem", "")
                 
