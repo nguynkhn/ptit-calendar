@@ -16,6 +16,8 @@ const eventColors = {
 };
 const locale = "vi-VN";
 
+const eventLists = document.querySelector(".event-lists");
+
 function addEvent({ title, type, location, start_date, end_date }) {
   const eventCard = createElement("event-card");
 
@@ -46,7 +48,7 @@ function addEvent({ title, type, location, start_date, end_date }) {
   eventDate.appendChild(createElement("event-day", day));
   eventCard.appendChild(eventDate);
 
-  document.body.appendChild(eventCard);
+  eventLists.appendChild(eventCard);
 }
 
 async function login() {
@@ -76,8 +78,13 @@ async function updateEvents() {
   weekEnd.setHours(23, 59, 59, 999);
 
   const events = await pywebview.api.fetch_events(weekStart.toISOString(), weekEnd.toISOString());
-  document.body.innerHTML = "";
+  eventLists.innerHTML = "";
   events.forEach(addEvent);
 }
 
-window.addEventListener("pywebviewready", () => login().then(updateEvents));
+window.addEventListener("pywebviewready", () => {
+  const setLocked = () => eventLists.classList.toggle("pywebview-drag-region", !pywebview.state.locked);
+  pywebview.state.addEventListener("change", setLocked);
+  setLocked();
+  login().then(updateEvents);
+});

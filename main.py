@@ -138,14 +138,20 @@ def on_beforeload(window):
     icon_image = PIL.Image.open("assets/logo.png")
     icon = pystray.Icon("ptit-calendar", icon=icon_image, title="PTIT Calendar",
                         menu=pystray.Menu(
-                            pystray.MenuItem("Quit", lambda: (icon.stop(), window.destroy())),
+                            pystray.MenuItem("Locked",
+                                             lambda: setattr(window.state, "locked", not window.state.locked),
+                                             checked=lambda _: window.state.locked),
+                            pystray.MenuItem("Quit", lambda: (window.destroy(), icon.stop())),
                         ))
     threading.Thread(target=lambda: icon.run(), daemon=True).start()
 
+    window.show()
     window.events.before_load -= on_beforeload
 
 if __name__ == "__main__":
     window = webview.create_window("PTIT Calendar", width=360, height=480, frameless=True,
-                                   url="assets/index.html", js_api=API())
+                                   hidden=True, easy_drag=False, js_api=API(),
+                                   url="assets/index.html")
+    window.state.locked = False
     window.events.before_load += on_beforeload
     webview.start()

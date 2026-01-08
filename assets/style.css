@@ -4,7 +4,7 @@
   box-sizing: border-box;
 }
 
-body {
+.event-lists {
   width: 100%;
   min-height: 100vh;
   padding: 1rem;
@@ -12,6 +12,7 @@ body {
   flex-direction: column;
   gap: 1rem;
   align-items: center;
+  background-color: #fefefe;
 }
 
 .event-card {
@@ -111,4 +112,3 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0, 0, 0, 0.35);
 }
-
