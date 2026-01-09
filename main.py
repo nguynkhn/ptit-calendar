@@ -1,11 +1,11 @@
 from enum import Enum
 import keyring
 import os
-import PIL.Image
+from PIL import Image
 import pystray
-import threading
+from threading import Thread
 import requests
-import requests_oauthlib
+from requests_oauthlib import OAuth2Session
 import webview
 import win32gui
 
@@ -24,6 +24,38 @@ class EventType(str, Enum):
     PERSONAL = "Cá nhân"
     OTHER = "Khác"
 
+def parse_event(source, data):
+    event = dict()
+    event["start_date"] = data.get("thoiGianGiao", data.get("thoiGianBatDau", ""))
+    event["end_date"] = data.get("thoiGianKetThuc", "")
+
+    match source:
+        case EventSource.QLDT_THOI_KHOA_BIEU:
+            event["title"] = (
+                data.get("lopHocPhan", {}).get("hocPhan", {}).get("ten")
+                or data.get("lopHocPhan", {}).get("maHocPhan")
+                or data.get("tenLopHocPhan", "")
+            )
+            event["type"] = EventType.CLASS
+            event["location"] = data.get("phongHoc", "")
+        case EventSource.QLDT_ASSIGNMENT:
+            event["title"] = data.get("noiDung", "")
+            event["type"] = EventType.ASSIGNMENT
+            event["location"] = data.get("tenLopHocPhan", "")
+        case EventSource.KHAO_THI_LICH_THI:
+            event["title"] = ", ".join(
+                (item.get("ten") or "")
+                for item in (data.get("danhSachHocPhan") or [])
+            )
+            event["type"] = EventType.EXAM
+            event["location"] = data.get("phong", {}).get("ma", "")
+        case EventSource.SLINK_SU_KIEN:
+            event["title"] = data.get("tenSuKien", "")
+            event["type"] = EventType(data.get("loaiSuKien"))
+            event["location"] = data.get("diaDiem", "")
+
+    return event
+
 class API:
     BASE_URL = "https://gwdu.ptit.edu.vn"
     CONFIG_URL = f"{BASE_URL}/sso/realms/ptit/.well-known/openid-configuration"
@@ -41,7 +73,7 @@ class API:
         token = API._read_token()
 
         self._config = response.json()
-        self._session = requests_oauthlib.OAuth2Session(client_id=API.CLIENT_ID, scope=API.SCOPE,
+        self._session = OAuth2Session(client_id=API.CLIENT_ID, scope=API.SCOPE,
                                                         auto_refresh_url=self._config["token_endpoint"],
                                                         auto_refresh_kwargs=dict(client_id=API.CLIENT_ID),
                                                         token=token, token_updater=API._write_token)
@@ -75,54 +107,22 @@ class API:
         for source in EventSource:
             endpoint = f"{API.BASE_URL}{source.value}/from/{from_date}/to/{to_date}"
             response = self._session.get(endpoint)
-            response.raise_for_status()
+            if not response.ok:
+                continue
 
             json = response.json()
             if not json["success"]:
                 continue
 
             for data in json["data"]:
-                event = dict()
-                event["title"] = source.name
-                event["start_date"] = data.get("thoiGianBatDau")
-                event["end_date"] = data.get("thoiGianKetThuc")
-
-                match source:
-                    case EventSource.QLDT_THOI_KHOA_BIEU:
-                        event["title"] = (
-                            data.get("lopHocPhan", {}).get("hocPhan", {}).get("ten")
-                            or data.get("lopHocPhan", {}).get("maHocPhan")
-                            or data.get("tenLopHocPhan", "")
-                        )
-                        event["type"] = EventType.CLASS
-                        event["location"] = data.get("phongHoc", "")
-                    case EventSource.QLDT_ASSIGNMENT:
-                        event["title"] = data.get("noiDung", "")
-                        event["type"] = EventType.ASSIGNMENT
-                        event["location"] = data.get("tenLopHocPhan", "")
-                    case EventSource.KHAO_THI_LICH_THI:
-                        event["title"] = ", ".join(
-                            (item.get("ten") or "")
-                            for item in (data.get("danhSachHocPhan") or [])
-                        )
-                        event["type"] = EventType.EXAM
-                        event["location"] = data.get("phong", {}).get("ma", "")
-                    case EventSource.SLINK_SU_KIEN:
-                        event["title"] = data.get("tenSuKien", "")
-                        event["type"] = EventType(data.get("loaiSuKien"))
-                        event["location"] = data.get("diaDiem", "")
-                
+                event = parse_event(source, data)
                 events.append(event)
+
         return events
 
-def on_beforeload(window):
-    # Allow OAuthlib to parse http URI
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+CORNER_RADIUS = 20
 
-    # PTIT SSO doesn't have http://127.0.0.1 required
-    api: API = window._js_api
-    api._session.redirect_uri = window.real_url.replace("127.0.0.1", "localhost")
-
+def modify_window_handle(window):
     # Attach to desktop
     hwnd = window.native.Handle.ToInt64()
     progman = win32gui.FindWindow("Progman", None)
@@ -130,20 +130,30 @@ def on_beforeload(window):
     win32gui.SetParent(hwnd, progman)
 
     # Set rounded corners
-    radius = 20
-    rgn = win32gui.CreateRoundRectRgn(0, 0, window.width, window.height, radius, radius)
+    rgn = win32gui.CreateRoundRectRgn(0, 0, window.width, window.height, CORNER_RADIUS, CORNER_RADIUS)
     win32gui.SetWindowRgn(hwnd, rgn, True)
 
-    # Start system tray
-    icon_image = PIL.Image.open("assets/logo.png")
-    icon = pystray.Icon("ptit-calendar", icon=icon_image, title="PTIT Calendar",
-                        menu=pystray.Menu(
-                            pystray.MenuItem("Locked",
-                                             lambda: setattr(window.state, "locked", not window.state.locked),
-                                             checked=lambda _: window.state.locked),
-                            pystray.MenuItem("Quit", lambda: (window.destroy(), icon.stop())),
-                        ))
-    threading.Thread(target=lambda: icon.run(), daemon=True).start()
+def start_system_tray(window):
+    menu = pystray.Menu(
+        pystray.MenuItem("Locked",
+                         lambda: setattr(window.state, "locked", not window.state.locked),
+                         checked=lambda _: window.state.locked),
+        pystray.MenuItem("Quit", lambda: (window.destroy(), icon.stop())),
+    )
+
+    icon_image = Image.open("assets/logo.png")
+    icon = pystray.Icon("ptit-calendar", icon=icon_image, title="PTIT Calendar", menu=menu)
+    Thread(target=lambda: icon.run(), daemon=True).start()
+
+def on_beforeload(window):
+    # Allow OAuthlib to parse http URI
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+    # PTIT SSO doesn't have http://127.0.0.1 required
+    window._js_api._session.redirect_uri = window.real_url.replace("127.0.0.1", "localhost")
+
+    modify_window_handle(window)
+    start_system_tray(window)
 
     window.show()
     window.events.before_load -= on_beforeload

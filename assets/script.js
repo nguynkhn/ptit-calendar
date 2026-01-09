@@ -18,15 +18,14 @@ const locale = "vi-VN";
 
 const eventLists = document.querySelector(".event-lists");
 
-function addEvent({ title, type, location, start_date, end_date }) {
+function addEvent({ title, type, location, startDate, endDate, isNow }) {
   const eventCard = createElement("event-card");
+  if (isNow)
+    eventCard.classList.add("event-now");
 
   const eventIndicator = createElement("event-indicator");
   eventIndicator.style.backgroundColor = eventColors[type];
   eventCard.appendChild(eventIndicator);
-
-  const startDate = new Date(start_date);
-  const endDate = new Date(end_date);
 
   const startTime = startDate.toLocaleString(locale, { hour: "2-digit", minute: "2-digit" });
   const endTime = endDate.toLocaleString(locale, { hour: "2-digit", minute: "2-digit" });
@@ -59,8 +58,11 @@ async function login() {
   }
 
   const authUrl = await pywebview.api.authorize();
-  if (authUrl !== true)
-    location.href = authUrl;
+  if (authUrl === true)
+    return true;
+
+  location.href = authUrl;
+  return false;
 }
 
 async function updateEvents() {
@@ -78,13 +80,25 @@ async function updateEvents() {
   weekEnd.setHours(23, 59, 59, 999);
 
   const events = await pywebview.api.fetch_events(weekStart.toISOString(), weekEnd.toISOString());
-  eventLists.innerHTML = "";
-  events.forEach(addEvent);
+  const filteredEvents = events
+      .map(event => {
+        event.startDate = new Date(event.start_date);
+        event.endDate = new Date(event.end_date);
+        event.isNow = event.startDate < now && event.endDate > now;
+        return event;
+      })
+      .toSorted((a, b) => a.startDate - b.startDate)
+      .filter(event => event.endDate > now);
+  if (filteredEvents.length > 0) {
+    eventLists.innerHTML = "";
+    filteredEvents.forEach(addEvent);
+  }
 }
 
-window.addEventListener("pywebviewready", () => {
+window.addEventListener("pywebviewready", async () => {
   const setLocked = () => eventLists.classList.toggle("pywebview-drag-region", !pywebview.state.locked);
   pywebview.state.addEventListener("change", setLocked);
   setLocked();
-  login().then(updateEvents);
+  if (await login())
+    updateEvents();
 });
